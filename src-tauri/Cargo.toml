@@ -1,0 +1,45 @@
+[package]
+name = "streamsoundcast"
+version = "0.2.0"
+edition = "2024"
+rust-version = "1.88"
+
+[features]
+default = ["desktop"]
+desktop = ["dep:tauri", "dep:tauri-build", "dep:tauri-plugin-updater"]
+custom-protocol = ["desktop", "tauri/custom-protocol"]
+
+[[bin]]
+name = "streamsoundcast"
+path = "src/main.rs"
+required-features = ["desktop"]
+
+[build-dependencies]
+tauri-build = { version = "2", optional = true , features = [] }
+
+[dependencies]
+anyhow = "1"
+bytemuck = "1"
+chacha20poly1305 = "0.10"
+crossbeam-queue = "0.3"
+hkdf = "0.12"
+hmac = "0.12"
+if-addrs = "0.14"
+opus = "0.3"
+rand_core = { version = "0.6", features = ["getrandom"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+sha2 = "0.10"
+sysinfo = { version = "0.36", default-features = false, features = ["system"] }
+tauri = { version = "2", optional = true , features = [] }
+tauri-plugin-updater = { version = "2", optional = true }
+tokio = { version = "1", features = ["io-util", "macros", "net", "rt-multi-thread", "sync", "time"] }
+toml = "0.9"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+x25519-dalek = { version = "2", features = ["static_secrets"] }
+
+[target.'cfg(windows)'.dependencies]
+wasapi = "0.27"
+windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_Media", "Win32_Storage_FileSystem", "Win32_UI_WindowsAndMessaging", "Win32_System_Threading"] }

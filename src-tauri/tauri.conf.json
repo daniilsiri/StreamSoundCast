@@ -1,0 +1,51 @@
+{
+  "$schema": "https://schema.tauri.app/config/2",
+  "productName": "StreamSoundCast",
+  "mainBinaryName": "streamsoundcast",
+  "version": "0.2.0",
+  "identifier": "local.wavecast.desktop",
+  "build": {
+    "beforeDevCommand": "npm run dev -- --host 127.0.0.1 --port 1420 --strictPort",
+    "devUrl": "http://127.0.0.1:1420",
+    "beforeBuildCommand": "npm run build",
+    "frontendDist": "../dist"
+  },
+  "app": {
+    "windows": [
+      {
+        "label": "main",
+        "title": "StreamSoundCast",
+        "width": 1240,
+        "height": 790,
+        "minWidth": 760,
+        "minHeight": 600,
+        "backgroundColor": "#111716"
+      }
+    ],
+    "security": {
+      "csp": "default-src 'self'; connect-src ipc: http://ipc.localhost; style-src 'self'; img-src 'self' data:; font-src 'self'"
+    }
+  },
+  "bundle": {
+    "active": true,
+    "useLocalToolsDir": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/icon.ico"
+    ],
+    "createUpdaterArtifacts": true
+  },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEQ4QTA3REU1REUwQkE5NDAKUldSQXFRdmU1WDJnMk14WkJnREJuelUxLytkV3NmMVZEQ3pQbkNjRG5DcXc0TkNZMTBPalorVDAK",
+      "endpoints": [
+        "https://github.com/daniilsiri/StreamSoundCast/releases/latest/download/latest.json"
+      ],
+      "windows": {
+        "installMode": "passive"
+      }
+    }
+  }
+}

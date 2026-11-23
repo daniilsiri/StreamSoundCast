@@ -1,0 +1,11 @@
+.build-tools/
+node_modules/
+dist/
+target/
+src-tauri/target/
+src-tauri/gen/
+*.log
+*-setup.exe
+*.sig
+*.key
+

@@ -1,26 +1,23 @@
-import { useEffect, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
+import { useEffect, useId, useLayoutEffect, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import { getCurrentWindow } from '@tauri-apps/api/window'
 import {
-  Activity, ArrowDownLeft, ArrowRight, ArrowUpRight, AudioLines, ChevronDown, ChevronRight, Download,
-  Check, CircleAlert, EthernetPort, Gauge, Headphones, Laptop, Mic, Monitor, Moon, Palette, Plus, RefreshCw,
-  Router, Settings2, ShieldCheck, SlidersHorizontal, Speaker, Sun, Volume2, VolumeX, X,
+  ArrowDownLeft, ArrowRight, ArrowUpRight, AudioLines, ChevronDown, ChevronRight, Download,
+  Check, CircleAlert, EthernetPort, Gauge, Headphones, Info, Laptop, Mic, Monitor, Moon, Palette, Plus, RefreshCw,
+  Router, ShieldCheck, SlidersHorizontal, Speaker, Sun, Volume2, VolumeX, X,
 } from 'lucide-react'
 import { native, useWave, type Connection, type Peer, type Settings } from './state'
 import { languages, translate, localizeMessage, type Language, type TextKey } from './i18n'
 import mark from './mark.svg'
 
-const navigation = [
-  { id: 'mixer', icon: SlidersHorizontal },
-  { id: 'settings', icon: Settings2 },
-] as const
+const navigation = ['mixer', 'settings'] as const
 
 const themes = [
-  { id: 'dark', icon: Moon },
-  { id: 'light', icon: Sun },
   { id: 'system', icon: Monitor },
+  { id: 'light', icon: Sun },
+  { id: 'dark', icon: Moon },
 ] as const
 
-const accents = ['lime', 'blue', 'violet', 'coral', 'amber'] as const
+const accents = ['mint', 'lime', 'blue', 'violet', 'coral', 'amber'] as const
 
 function useText() {
   const language = useWave(state => state.settings.language)
@@ -37,17 +34,11 @@ export function App() {
   const section = useWave(state => state.section)
   const navigate = useWave(state => state.navigate)
   const connection = useWave(state => state.connection)
-  const deviceName = useWave(state => state.settings.deviceName)
   const theme = useWave(state => state.settings.theme)
   const accent = useWave(state => state.settings.accent)
-  const addresses = useWave(state => state.addresses)
-  const ready = useWave(state => state.ready)
   const error = useWave(state => state.error)
   const clearError = useWave(state => state.clearError)
   const [manual, openManual] = useState(false)
-  const title = t(section === 'mixer' ? 'mixerTitle' : 'settings')
-  const description = t(section === 'mixer' ? 'mixerDescription' : 'settingsDescription')
-  const localIp = addresses[0]
 
   useLayoutEffect(() => { document.documentElement.lang = language }, [language])
 
@@ -78,38 +69,26 @@ export function App() {
 
   return (
     <div className="app-shell">
-      <aside className="sidebar">
+      <header className="app-header">
         <button className="brand" onClick={() => navigate('mixer')} aria-label={`StreamSoundCast · ${t('mixer')}`}>
-          <img className="brand-icon" src={mark} alt="" width={34} height={34} />
+          <img className="brand-icon" src={mark} alt="" width={30} height={30} />
           <span className="wordmark">StreamSoundCast</span>
         </button>
         <nav className="nav" aria-label={t('sections')}>
-          {navigation.map(({ id, icon: Icon }) => (
-            <button key={id} aria-current={section === id ? 'page' : undefined} className={section === id ? 'nav-link active' : 'nav-link'}
-              onClick={() => navigate(id)} title={t(id)} aria-label={t(id)}>
-              <Icon size={19} strokeWidth={1.8} /><span>{t(id)}</span>
-              {id === 'settings' && updateVersion && <i className="update-dot" title={t('updateAvailable', { version: updateVersion })} />}
+          {navigation.map(id => (
+            <button key={id} aria-current={section === id ? 'page' : undefined} className="nav-link"
+              onClick={() => navigate(id)}>
+              {t(id)}
+              {id === 'settings' && updateVersion && <span className="update-dot" role="img"
+                aria-label={t('updateAvailable', { version: updateVersion })} title={t('updateAvailable', { version: updateVersion })} />}
             </button>
           ))}
         </nav>
-        <div className="sidebar-bottom">
-          <div className="identity">
-            <span className="small-icon"><Monitor size={18} /></span>
-            <div><strong title={deviceName}>{deviceName}</strong><small title={addresses.join(', ')}>{localIp ?? t('localDevice')}</small></div>
-          </div>
-          <div className="sidebar-network"><span className={ready ? 'status-dot green' : 'status-dot'} /> {t('localNetwork')}</div>
-        </div>
-      </aside>
-      <main className="main-content">
-        <header className="page-heading">
-          <div><h1>{title}</h1><p>{description}</p></div>
-          <span className={'connection-pill ' + (connection.phase === 'connected' ? 'connected' : '')}>
-            <span className={'status-dot ' + (connection.phase === 'connected' ? 'green' : connection.phase !== 'idle' ? 'gold' : '')} />
-            {t(connection.phase)}
-          </span>
-        </header>
+        <ConnectionMenu key={section} openManual={() => openManual(true)} />
+      </header>
+      <main className={section === 'mixer' ? 'mixer-page' : 'settings-page'} aria-label={t(section)}>
         {connection.message && <div className="notice" role="status"><CircleAlert size={17} />{message(connection.message)}</div>}
-        {section === 'mixer' && <Mixer openManual={() => openManual(true)} />}
+        {section === 'mixer' && <Mixer />}
         {section === 'settings' && <SettingsPage />}
       </main>
       {manual && connection.phase !== 'pairing' && <ManualDialog close={() => openManual(false)} />}
@@ -119,23 +98,71 @@ export function App() {
   )
 }
 
-function Mixer({ openManual }: { openManual: () => void }) {
+function ConnectionMenu({ openManual }: { openManual: () => void }) {
+  const { t } = useText()
+  const { phase, peer } = useWave(state => state.connection)
+  const [open, setOpen] = useState(false)
+  const root = useRef<HTMLDivElement>(null)
+  const trigger = useRef<HTMLButtonElement>(null)
+  const panelId = useId()
+  const label = phase === 'connected' && peer ? peer.name : t(phase === 'idle' ? 'connect' : phase)
+
+  useEffect(() => {
+    if (!open) return
+    const closeOutside = (event: PointerEvent) => {
+      if (event.target instanceof Node && !root.current?.contains(event.target)) setOpen(false)
+    }
+    const escape = (event: KeyboardEvent) => {
+      if (event.key !== 'Escape') return
+      setOpen(false)
+      trigger.current?.focus()
+    }
+    document.addEventListener('pointerdown', closeOutside)
+    document.addEventListener('keydown', escape)
+    return () => {
+      document.removeEventListener('pointerdown', closeOutside)
+      document.removeEventListener('keydown', escape)
+    }
+  }, [open])
+
+  const pairing = phase === 'pairing'
+  useEffect(() => {
+    if (pairing) setOpen(false)
+  }, [pairing])
+
+  return <div className="connection-menu" ref={root} onBlur={event => {
+    if (event.relatedTarget && !event.currentTarget.contains(event.relatedTarget)) setOpen(false)
+  }}>
+    <button type="button" className="connection-trigger" ref={trigger} aria-expanded={open && !pairing}
+      aria-controls={open && !pairing ? panelId : undefined}
+      title={phase === 'connected' ? `${label} · ${t(phase)}` : label}
+      disabled={pairing} onClick={() => setOpen(!open)}>
+      <span className={`status-dot ${phase === 'connected' ? 'green' : phase !== 'idle' ? 'gold' : ''}`} />
+      <span>{label}</span><ChevronDown size={14} aria-hidden="true" />
+    </button>
+    {open && !pairing && <PeerPanel id={panelId} openManual={() => {
+      setOpen(false)
+      trigger.current?.focus()
+      openManual()
+    }} />}
+  </div>
+}
+
+function Mixer() {
   const { t } = useText()
   return (
-    <div className="dashboard-grid">
-      <div className="mixer-column">
-        <div className="section-heading">
-          <h2>{t('channels')}</h2>
-          <span className="format-pill"><AudioLines size={15} /> 48 {t('khz')}</span>
-        </div>
-        <div className="channel-grid">
-          {lanes.map((_, index) => <ChannelCard key={index} index={index} />)}
-        </div>
+    <div className="mixer">
+      <div className="panel console">
+        <section className="console-group" aria-labelledby="console-send">
+          <h2 className="group-heading" id="console-send"><ArrowUpRight size={16} />{t('sendGroup')}</h2>
+          <div className="channel-grid"><ChannelCard index={0} /><ChannelCard index={1} /></div>
+        </section>
+        <section className="console-group" aria-labelledby="console-receive">
+          <h2 className="group-heading" id="console-receive"><ArrowDownLeft size={16} />{t('receiveGroup')}</h2>
+          <div className="channel-grid"><ChannelCard index={2} /><ChannelCard index={3} /></div>
+        </section>
       </div>
-      <div className="dashboard-side">
-        <PeerPanel openManual={openManual} />
-        <QualityCard />
-      </div>
+      <LinkQuality />
     </div>
   )
 }
@@ -167,11 +194,9 @@ function ChannelCard({ index }: { index: number }) {
     void updateSettings(settings => ({ ...settings, channels: settings.channels.map((item, i) => i === index ? { ...item, ...patch } : item) }))
   }
   const commit = () => { if (value !== channel.volume) update({ volume: value }) }
-  const level = channel.enabled ? enabledLevel : 0
-  const lit = Math.ceil(Math.min(1, Math.pow(level, 0.52)) * 18)
+  const level = channel.enabled && value > 0 ? enabledLevel : 0
+  const lit = Math.max(0, Math.min(18, Math.ceil((20 * Math.log10(level) + 36) / 2)))
   const route = t(incoming ? 'incoming' : 'outgoing')
-  const direction = incoming ? ArrowDownLeft : ArrowUpRight
-  const Direction = direction
   const endpoints = index === 1 ? devices.microphones : devices.outputs
   const defaultId = index === 1 ? devices.defaultMicrophone : devices.defaultOutput
   const available = endpoints.find(device => device.id === (configuredId || defaultId))
@@ -181,37 +206,45 @@ function ChannelCard({ index }: { index: number }) {
     : activeName ?? available?.name ?? (configuredId ? t('unavailableDevice') : t('windowsDefault'))
 
   return (
-    <article className={'panel channel ' + (incoming ? 'incoming' : 'outgoing') + (!channel.enabled ? ' muted' : '')}>
-      <div className="channel-header">
-        <span className="channel-icon"><Icon size={21} strokeWidth={1.75} /></span>
-        <span className="route"><Direction size={13} />{route}</span>
-        <Toggle enabled={channel.enabled} onChange={enabled => update({ enabled })} label={`${route} · ${title}`} />
-      </div>
-      <h3>{title}</h3>
-      <button className="channel-source" onClick={() => navigate('settings')} title={channelOptions}><span>{channelOptions}</span><ChevronRight size={13} /></button>
-      <div className="meter" aria-hidden="true">
-        {Array.from({ length: 18 }, (_, i) => <span key={i} className={i < lit ? 'lit' : ''} />)}
+    <article className={channel.enabled ? 'channel' : 'channel muted'}>
+      <div className="channel-heading">
+        <span className="channel-icon"><Icon size={17} strokeWidth={1.8} aria-hidden="true" /></span>
+        <div>
+          <h3>{title}</h3>
+          <button className="channel-source" onClick={() => navigate('settings')} title={channelOptions}>
+            <span>{channelOptions}</span><ChevronRight size={12} aria-hidden="true" />
+          </button>
+        </div>
       </div>
       <div className="volume">
-        <button className="speaker-button" aria-label={value > 0 ? t('muteVolume') : t('restoreVolume')} onClick={() => update({ volume: value > 0 ? 0 : 100 })}>
+        <input type="range" min="0" max="100" value={value} aria-label={`${t('volume')} · ${route} · ${title}`}
+          onChange={event => setValue(event.target.valueAsNumber)} onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
+        <div className="meter" aria-hidden="true">
+          {Array.from({ length: 18 }, (_, i) => <span key={i} className={i < lit ? 'lit' : undefined} />)}
+        </div>
+        <span className="meter-scale" aria-hidden="true"><span>0</span><span>−18</span><span>−36</span></span>
+        <output className="volume-value" aria-live="off">{value}%</output>
+      </div>
+      <div className="channel-controls">
+        <button className="icon-button speaker-button" aria-label={`${value > 0 ? t('muteVolume') : t('restoreVolume')} · ${route} · ${title}`}
+          onClick={() => update({ volume: value > 0 ? 0 : 100 })}>
           {value === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
         </button>
-        <input type="range" min="0" max="100" value={value} aria-label={`${t('volume')} · ${route} · ${title}`}
-          style={{ backgroundSize: value + '% 100%' }}
-          onChange={event => setValue(event.target.valueAsNumber)}
-          onPointerUp={commit} onKeyUp={commit} onBlur={commit} />
-        <span className="volume-value">{value}%</span>
+        <Toggle enabled={channel.enabled} onChange={enabled => update({ enabled })} label={`${route} · ${title}`}
+          text={t(channel.enabled ? 'channelOn' : 'channelOff')} />
       </div>
       {message && <p className="channel-message"><CircleAlert size={13} /> {translateMessage(message)}</p>}
     </article>
   )
 }
 
-function Toggle({ enabled, onChange, label }: { enabled: boolean; onChange: (on: boolean) => void; label: string }) {
-  return <button type="button" className="switch" role="switch" aria-checked={enabled} aria-label={label} onClick={() => onChange(!enabled)}><span /></button>
+function Toggle({ enabled, onChange, label, text }: { enabled: boolean; onChange: (on: boolean) => void; label: string; text?: string }) {
+  return <button type="button" className="switch" role="switch" aria-checked={enabled} aria-label={label} onClick={() => onChange(!enabled)}>
+    <span className="switch-track" aria-hidden="true" />{text && <span aria-hidden="true">{text}</span>}
+  </button>
 }
 
-function PeerPanel({ openManual }: { openManual: () => void }) {
+function PeerPanel({ id, openManual }: { id: string, openManual: () => void }) {
   const { t } = useText()
   const { peers, connection } = useWave()
   const scan = useWave(state => state.scan)
@@ -227,7 +260,7 @@ function PeerPanel({ openManual }: { openManual: () => void }) {
   const current = connection.peer
   const others = peers.filter(peer => peer.id !== current?.id && peer.ip !== current?.ip)
   return (
-    <section className="panel peers-panel" aria-labelledby="peers-title">
+    <section className="panel peers-panel" id={id} aria-labelledby="peers-title">
       <div className="panel-heading">
         <span className="panel-icon"><Router size={19} /></span>
         <h2 id="peers-title">{t('devices')}</h2>
@@ -263,26 +296,20 @@ function PeerRow({ peer, current = false }: { peer: Peer; current?: boolean }) {
   </div>
 }
 
-function QualityCard() {
+function LinkQuality() {
   const { t } = useText()
   const metrics = useWave(state => state.connection.metrics)
-  return <section className="panel quality-panel" aria-labelledby="quality-title">
-    <div className="panel-heading">
-      <span className="panel-icon teal"><Activity size={18} /></span>
-      <h2 id="quality-title">{t('quality')}</h2>
-    </div>
-    <div className="summary-metrics">
-      <Metric label={t('rtt')} value={metrics.rttMs} unit={t('ms')} />
-      <Metric label={t('loss')} value={metrics.lossPercent} unit="%" />
-      <Metric label={t('jitter')} value={metrics.jitterMs} unit={t('ms')} />
-    </div>
-    <div className="codec-row"><span><span className="status-dot green" /> Opus</span><span>48 {t('khz')} <span className="separator">·</span> 10 {t('ms')}</span></div>
-  </section>
+  return <footer className="link-quality" aria-label={t('quality')}>
+    <Metric label="RTT" value={metrics.rttMs} unit={t('ms')} />
+    <Metric label={t('loss')} value={metrics.lossPercent} unit="%" />
+    <Metric label={t('jitter')} value={metrics.jitterMs} unit={t('ms')} />
+    <span className="codec">Opus · 48 {t('khz')} · 10 {t('ms')}</span>
+  </footer>
 }
 
-function Metric({ label, value, unit }: { label: string; value: number | null; unit?: string }) {
+function Metric({ label, value, unit }: { label: string; value: number | null; unit: string }) {
   const { language } = useText()
-  return <div className="metric"><small>{label}</small><div><strong>{value === null ? '—' : value.toLocaleString(language, { maximumFractionDigits: 1 })}</strong>{unit && <span>{unit}</span>}</div></div>
+  return <span className="metric">{label} <strong>{value === null ? '—' : value.toLocaleString(language, { maximumFractionDigits: 1 }) + (unit === '%' ? unit : ` ${unit}`)}</strong></span>
 }
 
 function AppearanceSettings() {
@@ -290,27 +317,27 @@ function AppearanceSettings() {
   const theme = useWave(state => state.settings.theme)
   const accent = useWave(state => state.settings.accent)
   const updateSettings = useWave(state => state.updateSettings)
-  return <section className="panel subpage-card wide appearance">
-    <div className="panel-heading"><span className="panel-icon"><Palette size={19} /></span><h2>{t('appearance')}</h2></div>
-    <div className="fields appearance-fields">
+  return <section className="settings-section" aria-labelledby="settings-appearance">
+    <div className="settings-heading"><h1 id="settings-appearance">{t('appearance')}</h1></div>
+    <div className="panel appearance">
       <Select label={t('language')} value={language} items={languages.map(({ id, label }) => ({ value: id, label }))}
         onChange={value => void updateSettings({ language: value as Language })} />
-      <fieldset className="field">
-        <legend>{t('theme')}</legend>
-        <div className="segmented">
+      <div className="field">
+        <span id="theme-label">{t('theme')}</span>
+        <div className="segmented" role="group" aria-labelledby="theme-label">
           {themes.map(({ id, icon: Icon }) => <button key={id} type="button" aria-pressed={theme === id}
             onClick={() => void updateSettings({ theme: id })}><Icon size={15} />{t(id)}</button>)}
         </div>
-      </fieldset>
-      <fieldset className="field">
-        <legend>{t('accent')}</legend>
-        <div className="swatches">
+      </div>
+      <div className="field">
+        <span id="accent-label">{t('accent')}</span>
+        <div className="swatches" role="group" aria-labelledby="accent-label">
           {accents.map(id => <button className="swatch" data-accent={id} key={id} type="button" aria-label={t(id)} title={t(id)}
             aria-pressed={accent === id} onClick={() => void updateSettings({ accent: id })}>
             <span>{accent === id && <Check size={15} strokeWidth={3} />}</span>
           </button>)}
         </div>
-      </fieldset>
+      </div>
     </div>
   </section>
 }
@@ -325,91 +352,139 @@ function UpdatePanel() {
   } as const
   const status = statusKeys[updateStatus]
   const installing = updateStatus === 'installing'
-  return <section className="panel subpage-card wide update-panel" aria-labelledby="updates-title">
-    <div className="panel-heading">
-      <span className="panel-icon"><Download size={18} /></span>
-      <h2 id="updates-title">{t('updates')}</h2>
-      {appVersion && <small className="mono">v{appVersion}</small>}
-    </div>
-    <div className="update-row">
-      <p aria-live="polite">{active && updateVersion ? t('updateBusy')
-        : status ? t(status, { version: updateVersion ?? '' }) : null}</p>
-      <button className="button secondary" disabled={!native || updateStatus === 'checking' || installing}
-        onClick={() => void checkUpdate()}><RefreshCw size={15} />{t('updateCheck')}</button>
-      {updateVersion && <button className="button primary" disabled={active || installing}
-        onClick={() => void installUpdate()}><Download size={15} />{t('updateInstall')}</button>}
+  return <section className="settings-section" aria-labelledby="updates-title">
+    <div className="settings-heading"><h1 id="updates-title">{t('updates')}</h1></div>
+    <div className="panel settings-list">
+      {appVersion && <div className="settings-row"><span>{t('installedVersion')}</span><strong className="mono">{appVersion}</strong></div>}
+      <div className="settings-row"><span>{t('updateSource')}</span><span>GitHub Releases</span></div>
+      <div className="update-row">
+        <p aria-live="polite">{active && updateVersion ? t('updateBusy')
+          : status ? t(status, { version: updateVersion ?? '' }) : t('updateAtStartup')}</p>
+        <button className="button secondary" disabled={!native || updateStatus === 'checking' || installing}
+          onClick={() => void checkUpdate()}><RefreshCw size={15} />{t('updateCheck')}</button>
+        {updateVersion && <button className="button primary" disabled={active || installing}
+          onClick={() => void installUpdate()}><Download size={15} />{t('updateInstall')}</button>}
+      </div>
     </div>
   </section>
 }
 
+const settingsPages = [
+  { id: 'audio', icon: SlidersHorizontal, Panel: AudioSettings },
+  { id: 'appearance', icon: Palette, Panel: AppearanceSettings },
+  { id: 'localNetwork', icon: Router, Panel: NetworkSettings },
+  { id: 'updates', icon: Download, Panel: UpdatePanel },
+] as const
+
 function SettingsPage() {
+  const { t } = useText()
+  const [page, setPage] = useState<typeof settingsPages[number]['id']>('audio')
+  const Panel = settingsPages.find(item => item.id === page)!.Panel
+  return <div className="settings-layout">
+    <nav className="settings-nav" aria-label={t('settingsSections')}>
+      {settingsPages.map(({ id, icon: Icon }) => <button key={id} className="nav-link" type="button"
+        aria-current={page === id ? 'page' : undefined} onClick={() => setPage(id)}>
+        <Icon size={16} aria-hidden="true" />{t(id)}
+      </button>)}
+    </nav>
+    <Panel />
+  </div>
+}
+
+function AudioSettings() {
   const { t, message } = useText()
   const { settings, devices, devicesLoading, devicesError, refreshDevices, updateSettings } = useWave()
-  const [name, setName] = useState(settings.deviceName)
-  useEffect(() => setName(settings.deviceName), [settings.deviceName])
+  const sourceLabelId = useId()
+  const sourceHintId = useId()
   const option = (update: Partial<Settings>) => { void updateSettings(update) }
   const endpoints = (entries: { id: string; name: string }[], current: string, defaultId: string | null) => [
     { value: '', label: [t('windowsDefault'), entries.find(entry => entry.id === defaultId)?.name].filter(Boolean).join(' · ') },
     ...entries.map(entry => ({ value: entry.id, label: entry.name })),
     ...(current && !entries.some(entry => entry.id === current) ? [{ value: current, label: t('unavailableDevice') }] : []),
   ]
-  const saveName = (event: FormEvent) => {
-    event.preventDefault()
-    if (name.trim()) option({ deviceName: name.trim() })
-  }
-  return <div className="subpage-grid settings-grid">
-    <AppearanceSettings />
-    <UpdatePanel />
-    <section className="panel subpage-card wide">
-      <div className="panel-heading">
-        <span className="panel-icon"><Speaker size={19} /></span><h2>{t('audioRoutes')}</h2>
-        <button className={'icon-button ' + (devicesLoading ? 'spinning' : '')} disabled={devicesLoading || !native}
-          aria-label={t('refreshAudio')} onClick={() => void refreshDevices(true)}><RefreshCw size={18} /></button>
+  return <section className="settings-section" aria-labelledby="audio-title">
+      <div className="settings-heading">
+        <h1 id="audio-title">{t('audio')}</h1>
+        <button className={`button secondary ${devicesLoading ? 'spinning' : ''}`} disabled={devicesLoading || !native}
+          onClick={() => void refreshDevices(true)}><RefreshCw size={15} aria-hidden="true" />{t('refreshAudio')}</button>
       </div>
       {devicesError && <div className="notice" role="status"><CircleAlert size={17} />{message(devicesError)}</div>}
-      <div className="fields">
-        <div className="field">
-          <span>{t('computerSource')}</span>
-          <div className="segmented" role="group" aria-label={t('computerSource')}>
-            <button aria-pressed={settings.source === 'system'} onClick={() => option({ source: 'system' })}><Monitor size={16} /> {t('systemAudio')}</button>
-            <button aria-pressed={settings.source === 'application'} onClick={() => option({ source: 'application' })}><AudioLines size={16} /> {t('application')}</button>
+      <div className="panel audio-routes">
+        <section className="audio-group" aria-labelledby="audio-send">
+          <h2 className="group-heading" id="audio-send"><ArrowUpRight size={16} />{t('sendGroup')}</h2>
+          <div className="audio-fields">
+            <div className="field">
+              <FieldHint id={sourceHintId} label={t('computerSource')} text={t('computerSourceHint')}>
+                <span id={sourceLabelId}>{t('computerSource')}</span>
+              </FieldHint>
+              <div className="segmented" role="group" aria-labelledby={sourceLabelId} aria-describedby={sourceHintId}>
+                <button type="button" aria-pressed={settings.source === 'system'} onClick={() => option({ source: 'system' })}>{t('systemAudio')}</button>
+                <button type="button" aria-pressed={settings.source === 'application'} onClick={() => option({ source: 'application' })}>{t('application')}</button>
+              </div>
+            </div>
+            {settings.source === 'application' && <Select label={t('application')} hint={t('applicationHint')} value={settings.application?.pid.toString() ?? ''}
+              items={[
+                { value: '', label: devicesLoading ? t('findingApps') : t('selectApp') },
+                ...(settings.application && !devices.applications.some(app => app.pid === settings.application?.pid)
+                  ? [{ value: String(settings.application.pid), label: settings.application.name + ' · ' + t('waitingApp') }] : []),
+                ...devices.applications.map(app => ({ value: String(app.pid), label: `${app.name} · PID ${app.pid}` })),
+              ]}
+              onChange={pid => option({ application: devices.applications.find(app => String(app.pid) === pid) ?? null })} />}
+            <Select label={t('microphone')} hint={t('microphoneHint')} value={settings.microphone}
+              items={endpoints(devices.microphones, settings.microphone, devices.defaultMicrophone)} onChange={microphone => option({ microphone })} />
           </div>
-        </div>
-        {settings.source === 'application' && <Select label={t('application')} value={settings.application?.pid.toString() ?? ''}
-          items={[
-            { value: '', label: devicesLoading ? t('findingApps') : t('selectApp') },
-            ...(settings.application && !devices.applications.some(app => app.pid === settings.application?.pid)
-              ? [{ value: String(settings.application.pid), label: settings.application.name + ' · ' + t('waitingApp') }] : []),
-            ...devices.applications.map(app => ({ value: String(app.pid), label: `${app.name} · PID ${app.pid}` })),
-          ]}
-          onChange={pid => option({ application: devices.applications.find(app => String(app.pid) === pid) ?? null })} />}
-        <Select label={t('microphone')} value={settings.microphone} items={endpoints(devices.microphones, settings.microphone, devices.defaultMicrophone)} onChange={microphone => option({ microphone })} />
-        <Select label={t('computerOutput')} value={settings.computerOutput} items={endpoints(devices.outputs, settings.computerOutput, devices.defaultOutput)} onChange={computerOutput => option({ computerOutput })} />
-        <Select label={t('micOutput')} value={settings.microphoneOutput} items={endpoints(devices.outputs, settings.microphoneOutput, devices.defaultOutput)} onChange={microphoneOutput => option({ microphoneOutput })} />
+        </section>
+        <section className="audio-group" aria-labelledby="audio-receive">
+          <h2 className="group-heading" id="audio-receive"><ArrowDownLeft size={16} />{t('receiveGroup')}</h2>
+          <div className="audio-fields">
+            <Select label={t('computerOutput')} hint={t('computerOutputHint')} value={settings.computerOutput}
+              items={endpoints(devices.outputs, settings.computerOutput, devices.defaultOutput)} onChange={computerOutput => option({ computerOutput })} />
+            <Select label={t('micOutput')} hint={t('micOutputHint')} value={settings.microphoneOutput}
+              items={endpoints(devices.outputs, settings.microphoneOutput, devices.defaultOutput)} onChange={microphoneOutput => option({ microphoneOutput })} />
+          </div>
+        </section>
       </div>
+      <details className="panel audio-quality">
+        <summary><Gauge size={17} aria-hidden="true" /><span>{t('audioQuality')}</span><small>Opus · 48 {t('khz')}</small><ChevronDown size={15} aria-hidden="true" /></summary>
+        <div className="fields">
+          <NumberSelect label={t('computerBitrate')} value={settings.computerBitrate} values={[64, 96, 128, 160, 192, 224, 256]} unit={t('kbps')} onChange={computerBitrate => option({ computerBitrate })} />
+          <NumberSelect label={t('micBitrate')} value={settings.microphoneBitrate} values={[16, 24, 32, 48, 64, 80, 96]} unit={t('kbps')} onChange={microphoneBitrate => option({ microphoneBitrate })} />
+          <NumberSelect label={t('networkBuffer')} value={settings.jitterMs} values={[20, 30, 40, 50, 60, 70, 80]} unit={t('ms')} onChange={jitterMs => option({ jitterMs })} />
+          <NumberSelect label={t('playbackBuffer')} value={settings.playbackMs} values={[10, 20, 30, 40]} unit={t('ms')} onChange={playbackMs => option({ playbackMs })} />
+        </div>
+      </details>
     </section>
-    <section className="panel subpage-card">
-      <div className="panel-heading"><span className="panel-icon"><Router size={19} /></span><h2>{t('localNetwork')}</h2></div>
-      <form className="field name-field" onSubmit={saveName}>
+}
+
+function NetworkSettings() {
+  const { t } = useText()
+  const { settings, addresses, ready, updateSettings } = useWave()
+  const [name, setName] = useState(settings.deviceName)
+  useEffect(() => setName(settings.deviceName), [settings.deviceName])
+  const saveName = (event: FormEvent) => {
+    event.preventDefault()
+    if (name.trim()) void updateSettings({ deviceName: name.trim() })
+  }
+  return <section className="settings-section" aria-labelledby="network-title">
+    <div className="settings-heading"><h1 id="network-title">{t('localNetwork')}</h1></div>
+    <div className="panel settings-list">
+      <form className="settings-row name-field" onSubmit={saveName}>
         <label htmlFor="name">{t('thisComputerName')}</label>
         <div className="inline-form">
           <input id="name" value={name} onChange={event => setName(event.target.value)} required maxLength={48} />
           <button className="button secondary" disabled={!name.trim() || name.trim() === settings.deviceName}>{t('save')}</button>
         </div>
       </form>
-      <div className="settings-row"><span>{t('autoDiscovery')}</span><Toggle enabled={settings.discovery} label={t('autoDiscovery')} onChange={discovery => option({ discovery })} /></div>
-      <div className="settings-row"><span>{t('autoReconnect')}</span><Toggle enabled={settings.reconnect} label={t('autoReconnect')} onChange={reconnect => option({ reconnect })} /></div>
-    </section>
-    <section className="panel subpage-card">
-      <div className="panel-heading"><span className="panel-icon teal"><Gauge size={19} /></span><h2>{t('audioQuality')}</h2></div>
-      <div className="fields">
-        <NumberSelect label={t('computerBitrate')} value={settings.computerBitrate} values={[64, 96, 128, 160, 192, 224, 256]} unit={t('kbps')} onChange={computerBitrate => option({ computerBitrate })} />
-        <NumberSelect label={t('micBitrate')} value={settings.microphoneBitrate} values={[16, 24, 32, 48, 64, 80, 96]} unit={t('kbps')} onChange={microphoneBitrate => option({ microphoneBitrate })} />
-        <NumberSelect label={t('networkBuffer')} value={settings.jitterMs} values={[20, 30, 40, 50, 60, 70, 80]} unit={t('ms')} onChange={jitterMs => option({ jitterMs })} />
-        <NumberSelect label={t('playbackBuffer')} value={settings.playbackMs} values={[10, 20, 30, 40]} unit={t('ms')} onChange={playbackMs => option({ playbackMs })} />
-      </div>
-    </section>
-  </div>
+      <div className="settings-row"><span>{t('ip')}</span><span className="local-address">
+        <span className={ready ? 'status-dot green' : 'status-dot'} aria-hidden="true" />
+        <span className="mono">{addresses.join(', ') || '—'}</span>
+      </span></div>
+      <div className="settings-row"><span>{t('autoDiscovery')}</span><Toggle enabled={settings.discovery} label={t('autoDiscovery')}
+        onChange={discovery => void updateSettings({ discovery })} /></div>
+      <div className="settings-row"><span>{t('autoReconnect')}</span><Toggle enabled={settings.reconnect} label={t('autoReconnect')}
+        onChange={reconnect => void updateSettings({ reconnect })} /></div>
+    </div>
+  </section>
 }
 
 function NumberSelect({ label, value, values, unit, onChange }: { label: string; value: number; values: number[]; unit: string; onChange: (value: number) => void }) {
@@ -417,11 +492,53 @@ function NumberSelect({ label, value, values, unit, onChange }: { label: string;
   return <Select label={label} value={String(value)} items={items} onChange={value => onChange(Number(value))} />
 }
 
-function Select({ label, value, items, onChange }: { label: string; value: string; items: { value: string; label: string }[]; onChange: (value: string) => void }) {
-  return <label className="field"><span>{label}</span><span className="select-box">
-    <select aria-label={label} value={value} onChange={event => onChange(event.target.value)}>{items.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}</select>
-    <ChevronDown size={16} aria-hidden="true" />
-  </span></label>
+function Select({ label, hint, value, items, onChange }: {
+  label: string; hint?: string; value: string; items: { value: string; label: string }[]; onChange: (value: string) => void
+}) {
+  const id = useId()
+  const hintId = `${id}-hint`
+  const caption = <label htmlFor={id}>{label}</label>
+  return <div className="field">
+    {hint ? <FieldHint id={hintId} label={label} text={hint}>{caption}</FieldHint> : caption}
+    <span className="select-box">
+      <select id={id} aria-describedby={hint ? hintId : undefined} value={value}
+        onChange={event => onChange(event.target.value)}>
+        {items.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+      </select>
+      <ChevronDown size={16} aria-hidden="true" />
+    </span>
+  </div>
+}
+
+function FieldHint({ id, label, text, children }: { id: string; label: string; text: string; children: ReactNode }) {
+  const { t } = useText()
+  const [hovered, setHovered] = useState(false)
+  const [focused, setFocused] = useState(false)
+  const [dismissed, setDismissed] = useState(false)
+  const visible = !dismissed && (hovered || focused)
+  useEffect(() => {
+    if (!visible) return
+    const dismiss = (event: KeyboardEvent) => {
+      if (event.key === 'Escape') setDismissed(true)
+    }
+    document.addEventListener('keydown', dismiss)
+    return () => document.removeEventListener('keydown', dismiss)
+  }, [visible])
+  return <span className="field-caption"
+    onPointerEnter={event => {
+      if (event.pointerType !== 'touch') {
+        setHovered(true)
+        setDismissed(false)
+      }
+    }}
+    onPointerLeave={() => setHovered(false)}>
+    {children}
+    <button className="hint-trigger" type="button" aria-label={t('fieldHelp', { field: label })} aria-describedby={id}
+      onFocus={() => { setFocused(true); setDismissed(false) }}
+      onBlur={() => setFocused(false)}
+      onClick={() => { setFocused(true); setDismissed(false) }}><Info size={14} aria-hidden="true" /></button>
+    <span id={id} role="tooltip" className="field-tooltip" hidden={!visible}>{text}</span>
+  </span>
 }
 
 function Dialog({ title, icon, close, children }: { title: string; icon: ReactNode; close: () => void; children: ReactNode }) {

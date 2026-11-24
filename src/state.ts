@@ -6,7 +6,7 @@ import type { Language } from './i18n'
 export type Application = { pid: number; name: string; path: string; started: number }
 export type Channel = { enabled: boolean; volume: number }
 export type Theme = 'system' | 'light' | 'dark'
-export type Accent = 'lime' | 'blue' | 'violet' | 'coral' | 'amber'
+export type Accent = 'mint' | 'lime' | 'blue' | 'violet' | 'coral' | 'amber'
 export type Settings = {
   language: Language
   theme: Theme
@@ -61,7 +61,7 @@ export type UpdateStatus = 'idle' | 'checking' | 'current' | 'available' | 'inst
 const defaultSettings: Settings = {
   language: 'ru',
   theme: 'dark',
-  accent: 'lime',
+  accent: 'mint',
   deviceName: 'StreamSoundCast',
   discovery: true,
   reconnect: true,

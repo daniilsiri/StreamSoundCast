@@ -35,6 +35,7 @@ pub enum Theme {
 #[serde(rename_all = "snake_case")]
 pub enum Accent {
     #[default]
+    Mint,
     Lime,
     Blue,
     Violet,
@@ -396,16 +397,16 @@ mod tests {
         )?;
         let state = AppState::load(path.clone());
         let mut settings = state.settings.borrow().clone();
-        assert!(settings.theme == Theme::Dark && settings.accent == Accent::Lime);
+        assert!(settings.theme == Theme::Dark && settings.accent == Accent::Mint);
         assert!(settings.language == Language::Ru);
         settings.theme = Theme::Light;
-        settings.accent = Accent::Violet;
+        settings.accent = Accent::Lime;
         settings.language = Language::Es;
         state.set_settings(settings)?;
 
         let reopened = AppState::load(path.clone());
         let settings = reopened.settings.borrow();
-        assert!(settings.theme == Theme::Light && settings.accent == Accent::Violet);
+        assert!(settings.theme == Theme::Light && settings.accent == Accent::Lime);
         assert!(settings.language == Language::Es);
         assert_eq!(settings.microphone, "my-mic");
         assert_eq!(settings.computer_output, "my-speakers");

@@ -116,6 +116,8 @@ svg { flex-shrink: 0; }
 
 .panel { min-width: 0; background: var(--panel); border: 1px solid var(--line); border-radius: 10px; }
 .mixer-page { width: 100%; max-width: 1360px; margin-inline: auto; padding: 16px 20px 20px; }
+.mixer-page, .mixer, .console-group, .channel { display: flex; flex-direction: column; }
+.mixer-page, .mixer, .console, .channel-grid, .volume { flex: 1 0 auto; }
 .console, .audio-routes { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); }
 .console-group, .audio-group { min-width: 0; }
 .console-group + .console-group, .audio-group + .audio-group { border-inline-start: 1px solid var(--line); }
@@ -143,10 +145,9 @@ svg { flex-shrink: 0; }
 .muted .channel-icon { background: var(--surface); color: var(--muted); }
 
 .volume {
-  --fader-height: clamp(132px, 23vh, 182px);
   display: grid;
   grid-template-columns: 33px 12px auto;
-  grid-template-rows: var(--fader-height) auto;
+  grid-template-rows: minmax(132px, 1fr) auto;
   justify-content: center;
   gap: 7px 9px;
   margin: 13px 0 10px;
@@ -156,7 +157,7 @@ svg { flex-shrink: 0; }
   direction: rtl;
   appearance: none;
   width: 33px;
-  height: var(--fader-height);
+  align-self: stretch;
   margin: 0;
   border-radius: 4px;
   background: linear-gradient(var(--hover), var(--hover)) center / 4px 100% no-repeat;

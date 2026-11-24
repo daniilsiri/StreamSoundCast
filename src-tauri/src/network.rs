@@ -600,6 +600,14 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("wavecast-{}", Uuid::new_v4()));
         let a = test_node(dir.join("a.toml")).await;
         let b = test_node(dir.join("b.toml")).await;
+        let local_meter = tokio::spawn(media::monitor_local_audio(a.state.clone()));
+        time::timeout(Duration::from_secs(2), async {
+            while a.state.capture_owner.try_lock().is_ok() {
+                time::sleep(Duration::from_millis(15)).await;
+            }
+        })
+        .await
+        .expect("local metering did not start");
         let listener = TcpListener::bind((Ipv4Addr::LOCALHOST, 0)).await.unwrap();
         let address = listener.local_addr().unwrap();
         let (id_a, stop_a) = a
@@ -665,6 +673,16 @@ mod tests {
         .unwrap();
         a_result.unwrap().unwrap();
         b_result.unwrap().unwrap();
+        a.finish(id_a, Ok(()));
+        time::timeout(Duration::from_secs(2), async {
+            while a.state.capture_owner.try_lock().is_ok() {
+                time::sleep(Duration::from_millis(15)).await;
+            }
+        })
+        .await
+        .expect("local metering did not resume after disconnecting");
+        local_meter.abort();
+        let _ = local_meter.await;
         std::fs::remove_file(dir.join("a.toml")).unwrap();
         std::fs::remove_file(dir.join("b.toml")).unwrap();
         std::fs::remove_dir(dir).unwrap();

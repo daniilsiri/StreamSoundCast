@@ -7,6 +7,7 @@ use tauri::{Emitter, Manager, State};
 use streamsoundcast::{
     audio,
     model::{AppState, Settings, Snapshot},
+    monitor_local_audio,
     network::Network,
 };
 
@@ -85,6 +86,7 @@ fn main() {
             let network = Network::new(state.clone());
             app.manage(network.clone());
             tauri::async_runtime::spawn(network.serve());
+            tauri::async_runtime::spawn(monitor_local_audio(state.clone()));
             let app = app.handle().clone();
             tauri::async_runtime::spawn(async move {
                 let mut clock = tokio::time::interval(Duration::from_millis(120));

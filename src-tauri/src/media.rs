@@ -19,9 +19,67 @@ use crate::{
     audio::{Frame, SAMPLES, Worker, WorkerKind},
     echo::SystemEcho,
     jitter::{Jitter, Playout},
-    model::{AppState, Settings, SourceMode},
+    model::{AppState, Phase, Settings, SourceMode},
     protocol::{Keys, MAX_OPUS, MAX_PACKET, open_audio, seal_audio},
 };
+
+pub async fn monitor_local_audio(state: Arc<AppState>) {
+    let mut tuning = state.settings.subscribe();
+    let mut settings = tuning.borrow_and_update().clone();
+    let guard = Arc::new(AtomicUsize::new(0));
+    let mut capture_owner = None;
+    let mut workers: [Option<Worker>; 2] = Default::default();
+    let mut levels = [0.0_f32; 2];
+    let mut tick = time::interval(Duration::from_millis(20));
+    tick.set_missed_tick_behavior(MissedTickBehavior::Skip);
+
+    loop {
+        tick.tick().await;
+        if state.network.lock().unwrap().connection.phase == Phase::Connected {
+            // The session can start its capture workers once the preview drops its workers.
+            workers = Default::default();
+            levels = [0.0; 2];
+            capture_owner = None;
+            continue;
+        }
+
+        if capture_owner.is_none() || tuning.has_changed().unwrap_or(false) {
+            if capture_owner.is_none() {
+                let Ok(owner) = state.capture_owner.try_lock() else {
+                    continue;
+                };
+                capture_owner = Some(owner);
+            }
+            settings = tuning.borrow_and_update().clone();
+            for (lane, kind) in capture_kinds(&settings).into_iter().enumerate() {
+                let channel = settings.channels[lane];
+                let enabled = channel.enabled && channel.volume > 0;
+                match update_worker(&mut workers[lane], kind, enabled, &guard) {
+                    Ok(false) => (),
+                    Ok(true) => levels[lane] = 0.0,
+                    Err(error) => tracing::warn!(%error, lane, "Cannot start local audio meter"),
+                }
+            }
+        }
+
+        for (lane, level) in levels.iter_mut().enumerate() {
+            let Some(worker) = &workers[lane] else {
+                *level = 0.0;
+                continue;
+            };
+            let volume = settings.channels[lane].volume;
+            let samples = SAMPLES * (2 - lane);
+            *level *= 0.81;
+            for _ in 0..worker.queue.capacity() {
+                let Some(mut frame) = worker.queue.pop() else {
+                    break;
+                };
+                *level = level.max(meter(&mut frame[..samples], volume, 0.0));
+            }
+        }
+        state.network.lock().unwrap().update_local_levels(levels);
+    }
+}
 
 pub async fn run(
     state: Arc<AppState>,
@@ -30,6 +88,7 @@ pub async fn run(
     peer: SocketAddr,
     keys: &Keys,
 ) -> Result<()> {
+    let _capture_owner = state.capture_owner.lock().await;
     #[cfg(windows)]
     let _timer = MultimediaTimer::start();
     let mut tuning = state.settings.subscribe();
@@ -209,17 +268,13 @@ fn configure_encoders(settings: &Settings, encoders: &mut [Encoder; 2]) -> Resul
     Ok(())
 }
 
-fn update_workers(
-    settings: &Settings,
-    workers: &mut [Option<Worker>; 4],
-    guard: &Arc<AtomicUsize>,
-) -> Result<()> {
+fn capture_kinds(settings: &Settings) -> [WorkerKind; 2] {
     let application = if settings.source == SourceMode::Application {
         settings.application.clone()
     } else {
         None
     };
-    let kinds = [
+    [
         WorkerKind::Computer(settings.source.clone(), application),
         WorkerKind::Microphone {
             id: settings.microphone.clone(),
@@ -229,16 +284,40 @@ fn update_workers(
                 settings.microphone_output.clone()
             },
         },
+    ]
+}
+
+fn update_worker(
+    worker: &mut Option<Worker>,
+    kind: WorkerKind,
+    enabled: bool,
+    guard: &Arc<AtomicUsize>,
+) -> Result<bool> {
+    if !enabled {
+        return Ok(worker.take().is_some());
+    }
+    if worker.as_ref().is_some_and(|current| current.kind == kind) {
+        return Ok(false);
+    }
+    *worker = None;
+    *worker = Some(Worker::start(kind, guard.clone())?);
+    Ok(true)
+}
+
+fn update_workers(
+    settings: &Settings,
+    workers: &mut [Option<Worker>; 4],
+    guard: &Arc<AtomicUsize>,
+) -> Result<()> {
+    let [computer, microphone] = capture_kinds(settings);
+    let kinds = [
+        computer,
+        microphone,
         WorkerKind::Playback(settings.computer_output.clone(), settings.playback_ms),
         WorkerKind::Playback(settings.microphone_output.clone(), settings.playback_ms),
     ];
     for (lane, (worker, kind)) in workers.iter_mut().zip(kinds).enumerate() {
-        if !settings.channels[lane].enabled {
-            *worker = None;
-        } else if worker.as_ref().is_none_or(|current| current.kind != kind) {
-            *worker = None;
-            *worker = Some(Worker::start(kind, guard.clone())?);
-        }
+        update_worker(worker, kind, settings.channels[lane].enabled, guard)?;
     }
     Ok(())
 }

@@ -7,7 +7,7 @@ import {
 } from 'lucide-react'
 import { native, useWave, type Connection, type Peer, type Settings } from './state'
 import { languages, translate, localizeMessage, type Language, type TextKey } from './i18n'
-import mark from './mark.svg'
+import mark from './mark.png'
 
 const navigation = ['mixer', 'settings'] as const
 
@@ -226,7 +226,8 @@ function ChannelCard({ index }: { index: number }) {
         <output className="volume-value" aria-live="off">{value}%</output>
       </div>
       <div className="channel-controls">
-        <button className="icon-button speaker-button" aria-label={`${value > 0 ? t('muteVolume') : t('restoreVolume')} · ${route} · ${title}`}
+        <button className="icon-button speaker-button" data-muted={value === 0}
+          aria-label={`${value > 0 ? t('muteVolume') : t('restoreVolume')} · ${route} · ${title}`}
           onClick={() => update({ volume: value > 0 ? 0 : 100 })}>
           {value === 0 ? <VolumeX size={16} /> : <Volume2 size={16} />}
         </button>

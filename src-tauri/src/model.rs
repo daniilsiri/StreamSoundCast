@@ -263,6 +263,7 @@ pub struct AppState {
     pub id: Uuid,
     config_path: PathBuf,
     config_write: Mutex<()>,
+    pub(crate) capture_owner: tokio::sync::Mutex<()>,
     pub settings: watch::Sender<Settings>,
     pub network: Mutex<NetworkState>,
 }
@@ -291,6 +292,7 @@ impl AppState {
             id: config.id,
             config_path,
             config_write: Mutex::new(()),
+            capture_owner: tokio::sync::Mutex::new(()),
             settings: watch::channel(config.settings.clone()).0,
             network: Mutex::new(NetworkState::default()),
         });
@@ -355,6 +357,14 @@ impl AppState {
     }
 }
 
+impl NetworkState {
+    pub(crate) fn update_local_levels(&mut self, levels: [f32; 2]) {
+        if self.connection.phase != Phase::Connected {
+            self.connection.levels[..2].copy_from_slice(&levels);
+        }
+    }
+}
+
 #[cfg(windows)]
 fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
     use std::os::windows::ffi::OsStrExt;
@@ -385,6 +395,22 @@ fn replace_file(from: &Path, to: &Path) -> io::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn local_levels_leave_connected_levels_and_receive_channels_alone() {
+        let mut network = NetworkState::default();
+        network.update_local_levels([0.4, 0.2]);
+        assert_eq!(network.connection.levels, [0.4, 0.2, 0.0, 0.0]);
+
+        network.connection.phase = Phase::Connected;
+        network.connection.levels = [0.6, 0.3, 0.5, 0.1];
+        network.update_local_levels([0.1, 0.0]);
+        assert_eq!(network.connection.levels, [0.6, 0.3, 0.5, 0.1]);
+
+        network.connection = Connection::default();
+        network.update_local_levels([0.1, 0.0]);
+        assert_eq!(network.connection.levels, [0.1, 0.0, 0.0, 0.0]);
+    }
 
     #[test]
     fn preferences_round_trip_without_losing_existing_routes() -> anyhow::Result<()> {

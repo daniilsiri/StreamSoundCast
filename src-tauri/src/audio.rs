@@ -35,14 +35,20 @@ pub struct Devices {
 #[derive(Clone, PartialEq, Eq)]
 pub enum WorkerKind {
     Computer(SourceMode, Option<Application>),
+    OutputCapture(String),
     Microphone { id: String, echo_reference: String },
-    Playback(String, u32),
+    Playback {
+        id: String,
+        ms: u32,
+        captured_output: Option<String>,
+    },
 }
 
 pub struct Worker {
     pub queue: Arc<ArrayQueue<Frame>>,
     pub message: Arc<Mutex<Option<String>>>,
     pub device: Arc<Mutex<Option<ActiveEndpoint>>>,
+    pub playback_blocked: Arc<AtomicBool>,
     pub kind: WorkerKind,
     stop: Arc<AtomicBool>,
 }
@@ -50,7 +56,7 @@ pub struct Worker {
 impl Worker {
     pub fn start(kind: WorkerKind, guard: Arc<AtomicUsize>) -> Result<Self> {
         let queue = Arc::new(ArrayQueue::new(
-            if matches!(kind, WorkerKind::Playback(..)) {
+            if matches!(kind, WorkerKind::Playback { .. }) {
                 6
             } else {
                 4
@@ -58,10 +64,12 @@ impl Worker {
         ));
         let message = Arc::new(Mutex::new(None));
         let device = Arc::new(Mutex::new(None));
+        let playback_blocked = Arc::new(AtomicBool::new(false));
         let stop = Arc::new(AtomicBool::new(false));
         let (queue_thread, message_thread, stop_thread, kind_thread) =
             (queue.clone(), message.clone(), stop.clone(), kind.clone());
         let device_thread = device.clone();
+        let blocked_thread = playback_blocked.clone();
         thread::Builder::new()
             .name("wavecast-wasapi".into())
             .spawn(move || {
@@ -71,6 +79,7 @@ impl Worker {
                     &stop_thread,
                     &message_thread,
                     &device_thread,
+                    &blocked_thread,
                     &guard,
                 );
                 if let Err(error) = result {
@@ -84,6 +93,7 @@ impl Worker {
             queue,
             message,
             device,
+            playback_blocked,
             kind,
             stop,
         })
@@ -100,6 +110,18 @@ pub fn devices(include_applications: bool) -> Result<Devices> {
     platform::devices(include_applications)
 }
 
+#[cfg(any(windows, test))]
+fn captures_playback(captured_output: &str, playback_output: &str) -> bool {
+    captured_output.eq_ignore_ascii_case(playback_output)
+}
+
+#[cfg(test)]
+#[test]
+fn output_capture_only_conflicts_with_the_matching_playback_device() {
+    assert!(captures_playback("virtual-a", "VIRTUAL-A"));
+    assert!(!captures_playback("virtual-a", "speakers"));
+}
+
 #[cfg(not(windows))]
 mod platform {
     use super::*;
@@ -114,6 +136,7 @@ mod platform {
         _: &AtomicBool,
         _: &Mutex<Option<String>>,
         _: &Mutex<Option<ActiveEndpoint>>,
+        _: &AtomicBool,
         _: &AtomicUsize,
     ) -> Result<()> {
         Err(anyhow!("i18n:desktopOnly"))
@@ -387,6 +410,7 @@ mod platform {
         stop: &AtomicBool,
         message: &Mutex<Option<String>>,
         active_device: &Mutex<Option<ActiveEndpoint>>,
+        playback_blocked: &AtomicBool,
         guard: &AtomicUsize,
     ) -> Result<()> {
         let _com = Com::init()?;
@@ -437,6 +461,38 @@ mod platform {
                 Ok(())
             }
             WorkerKind::Computer(SourceMode::Application, None) => Err(anyhow!("i18n:selectApp")),
+            WorkerKind::OutputCapture(id) => {
+                while !stop.load(Relaxed) {
+                    let result = (|| -> Result<()> {
+                        let device = endpoint(&enumerator, Direction::Render, &id)?;
+                        anyhow::ensure!(
+                            device.get_direction() == Direction::Render,
+                            "i18n:unavailableDevice"
+                        );
+                        let client = initialize(
+                            device.get_iaudioclient().context("i18n:audioError")?,
+                            2,
+                            Direction::Capture,
+                            20,
+                        )?;
+                        report_endpoint(active_device, &device, id.clone());
+                        *message.lock().unwrap() = None;
+                        capture(client, None, 2, queue, stop)
+                    })();
+                    if let Err(error) = result {
+                        *message.lock().unwrap() = Some(error.to_string());
+                        *active_device.lock().unwrap() = None;
+                        while queue.pop().is_some() {}
+                        for _ in 0..10 {
+                            if stop.load(Relaxed) {
+                                break;
+                            }
+                            thread::sleep(Duration::from_millis(100));
+                        }
+                    }
+                }
+                Ok(())
+            }
             WorkerKind::Microphone { id, echo_reference } => {
                 let device = endpoint(&enumerator, Direction::Capture, &id)?;
                 let reference = endpoint(&enumerator, Direction::Render, &echo_reference)
@@ -446,8 +502,23 @@ mod platform {
                 report_endpoint(active_device, &device, id);
                 capture(client, None, 1, queue, stop)
             }
-            WorkerKind::Playback(id, ms) => {
+            WorkerKind::Playback {
+                id,
+                ms,
+                captured_output,
+            } => {
                 let device = endpoint(&enumerator, Direction::Render, &id)?;
+                if let Some(captured_output) = captured_output
+                    && captures_playback(
+                        &captured_output,
+                        &device.get_id().context("i18n:audioError")?,
+                    )
+                {
+                    playback_blocked.store(true, Relaxed);
+                    report_endpoint(active_device, &device, id);
+                    *message.lock().unwrap() = Some("i18n:sameOutputProtection".into());
+                    return Ok(());
+                }
                 let client = initialize(device.get_iaudioclient()?, 2, Direction::Render, ms)?;
                 report_endpoint(active_device, &device, id);
                 playback(client, queue, stop, guard)
@@ -513,6 +584,9 @@ mod platform {
         let result = (|| -> Result<()> {
             while !stop.load(Relaxed) {
                 let _ = event.wait_for_event(50);
+                if stop.load(Relaxed) {
+                    break;
+                }
                 let space = client.get_available_space_in_frames()? as usize * 2;
                 if space == 0 {
                     continue;
@@ -571,7 +645,14 @@ mod platform {
                 WorkerKind::Computer(SourceMode::System, None),
                 guard.clone(),
             )?;
-            let playback = Worker::start(WorkerKind::Playback(device.get_id()?, 20), guard)?;
+            let playback = Worker::start(
+                WorkerKind::Playback {
+                    id: device.get_id()?,
+                    ms: 20,
+                    captured_output: None,
+                },
+                guard,
+            )?;
             let steps = [4300.0, 5300.0, 6100.0]
                 .map(|frequency| std::f32::consts::TAU * frequency / 48_000.0);
             let amplitude = |samples: &[f32]| {

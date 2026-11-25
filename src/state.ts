@@ -15,6 +15,7 @@ export type Settings = {
   discovery: boolean
   reconnect: boolean
   source: 'system' | 'application'
+  systemOutput: string | null
   application: Application | null
   microphone: string
   computerOutput: string
@@ -66,6 +67,7 @@ const defaultSettings: Settings = {
   discovery: true,
   reconnect: true,
   source: 'system',
+  systemOutput: null,
   application: null,
   microphone: '',
   computerOutput: '',

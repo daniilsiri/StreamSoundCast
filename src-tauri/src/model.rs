@@ -79,6 +79,7 @@ pub struct Settings {
     pub discovery: bool,
     pub reconnect: bool,
     pub source: SourceMode,
+    pub system_output: Option<String>,
     pub application: Option<Application>,
     pub microphone: String,
     pub computer_output: String,
@@ -104,6 +105,7 @@ impl Default for Settings {
             discovery: true,
             reconnect: true,
             source: SourceMode::System,
+            system_output: None,
             application: None,
             microphone: String::new(),
             computer_output: String::new(),
@@ -126,6 +128,12 @@ impl Default for Settings {
 }
 
 impl Settings {
+    pub(crate) fn system_output_id(&self) -> Option<&str> {
+        self.system_output
+            .as_deref()
+            .filter(|id| self.source == SourceMode::System && !id.is_empty())
+    }
+
     pub fn validate(&mut self) -> anyhow::Result<()> {
         self.device_name = self.device_name.trim().to_owned();
         anyhow::ensure!(
@@ -425,9 +433,11 @@ mod tests {
         let mut settings = state.settings.borrow().clone();
         assert!(settings.theme == Theme::Dark && settings.accent == Accent::Mint);
         assert!(settings.language == Language::Ru);
+        assert_eq!(settings.system_output, None);
         settings.theme = Theme::Light;
         settings.accent = Accent::Lime;
         settings.language = Language::Es;
+        settings.system_output = Some("my-capture-output".into());
         state.set_settings(settings)?;
 
         let reopened = AppState::load(path.clone());
@@ -436,6 +446,7 @@ mod tests {
         assert!(settings.language == Language::Es);
         assert_eq!(settings.microphone, "my-mic");
         assert_eq!(settings.computer_output, "my-speakers");
+        assert_eq!(settings.system_output_id(), Some("my-capture-output"));
         fs::remove_file(path)?;
         fs::remove_dir(directory)?;
         Ok(())

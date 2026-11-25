@@ -182,7 +182,10 @@ function ChannelCard({ index }: { index: number }) {
   const source = useWave(state => state.settings.source)
   const application = useWave(state => state.settings.application)
   const devices = useWave(state => state.devices)
-  const configuredId = useWave(state => [null, state.settings.microphone, state.settings.computerOutput, state.settings.microphoneOutput][index])
+  const configuredId = useWave(state => [
+    state.settings.source === 'system' ? state.settings.systemOutput : null,
+    state.settings.microphone, state.settings.computerOutput, state.settings.microphoneOutput,
+  ][index])
   const activeDevice = useWave(state => state.connection.channelDevices[index])
   const enabledLevel = useWave(state => state.connection.levels[index])
   const message = useWave(state => state.connection.channelMessages[index])
@@ -201,7 +204,7 @@ function ChannelCard({ index }: { index: number }) {
   const defaultId = index === 1 ? devices.defaultMicrophone : devices.defaultOutput
   const available = endpoints.find(device => device.id === (configuredId || defaultId))
   const activeName = activeDevice?.configuredId === configuredId ? activeDevice?.name : undefined
-  const channelOptions = index === 0
+  const channelOptions = index === 0 && !configuredId
     ? source === 'system' ? t('systemAudio') : application?.name ?? t('selectApp')
     : activeName ?? available?.name ?? (configuredId ? t('unavailableDevice') : t('windowsDefault'))
 
@@ -395,9 +398,51 @@ function SettingsPage() {
 function AudioSettings() {
   const { t, message } = useText()
   const { settings, devices, devicesLoading, devicesError, refreshDevices, updateSettings } = useWave()
-  const sourceLabelId = useId()
-  const sourceHintId = useId()
   const option = (update: Partial<Settings>) => { void updateSettings(update) }
+  const savedApp = settings.application
+  const savedValue = savedApp ? `${savedApp.pid}:${savedApp.started}` : ''
+  const applications = devices.applications.map(app => ({
+    app, value: `${app.pid}:${app.started}`, label: `${app.name} · PID ${app.pid}`,
+  }))
+  const savedAppMissing = savedApp && !applications.some(item => item.value === savedValue)
+  const systemOutput = settings.systemOutput
+  const outputs = devices.outputs.map(device => ({
+    id: device.id, value: `output:${device.id}`, label: device.name,
+  }))
+  const selectedOutputMissing = systemOutput && !outputs.some(item => item.id === systemOutput)
+  const sourceItems: SelectEntry[] = [
+    { value: 'system', label: t('systemAudio') },
+    ...(settings.source === 'application' && !savedApp ? [{ value: '', label: t('selectApp'), disabled: true }] : []),
+    {
+      label: t('outputDevices'),
+      items: [
+        ...outputs,
+        ...(selectedOutputMissing ? [{ value: `output:${systemOutput}`, label: t('unavailableDevice') }] : []),
+        ...(!outputs.length && !selectedOutputMissing ? [{ value: 'no-outputs', label: t('noOutputDevices'), disabled: true }] : []),
+      ],
+    },
+    {
+      label: t('applications'),
+      items: [
+        ...(savedAppMissing ? [{ value: savedValue, label: `${savedApp.name} · ${t('waitingApp')}` }] : []),
+        ...applications,
+        ...(!applications.length ? [{ value: 'no-apps', label: t(devicesLoading ? 'findingApps' : 'noAudioApplications'), disabled: true }] : []),
+      ],
+    },
+  ]
+  const changeSource = (value: string) => {
+    if (value === 'system') {
+      option({ source: 'system', systemOutput: null })
+      return
+    }
+    const output = outputs.find(item => item.value === value)
+    if (output || (selectedOutputMissing && value === `output:${systemOutput}`)) {
+      option({ source: 'system', systemOutput: output?.id ?? systemOutput })
+      return
+    }
+    const application = applications.find(item => item.value === value)?.app ?? (value === savedValue ? savedApp : null)
+    if (application) option({ source: 'application', application })
+  }
   const endpoints = (entries: { id: string; name: string }[], current: string, defaultId: string | null) => [
     { value: '', label: [t('windowsDefault'), entries.find(entry => entry.id === defaultId)?.name].filter(Boolean).join(' · ') },
     ...entries.map(entry => ({ value: entry.id, label: entry.name })),
@@ -414,23 +459,9 @@ function AudioSettings() {
         <section className="audio-group" aria-labelledby="audio-send">
           <h2 className="group-heading" id="audio-send"><ArrowUpRight size={16} />{t('sendGroup')}</h2>
           <div className="audio-fields">
-            <div className="field">
-              <FieldHint id={sourceHintId} label={t('computerSource')} text={t('computerSourceHint')}>
-                <span id={sourceLabelId}>{t('computerSource')}</span>
-              </FieldHint>
-              <div className="segmented" role="group" aria-labelledby={sourceLabelId} aria-describedby={sourceHintId}>
-                <button type="button" aria-pressed={settings.source === 'system'} onClick={() => option({ source: 'system' })}>{t('systemAudio')}</button>
-                <button type="button" aria-pressed={settings.source === 'application'} onClick={() => option({ source: 'application' })}>{t('application')}</button>
-              </div>
-            </div>
-            {settings.source === 'application' && <Select label={t('application')} hint={t('applicationHint')} value={settings.application?.pid.toString() ?? ''}
-              items={[
-                { value: '', label: devicesLoading ? t('findingApps') : t('selectApp') },
-                ...(settings.application && !devices.applications.some(app => app.pid === settings.application?.pid)
-                  ? [{ value: String(settings.application.pid), label: settings.application.name + ' · ' + t('waitingApp') }] : []),
-                ...devices.applications.map(app => ({ value: String(app.pid), label: `${app.name} · PID ${app.pid}` })),
-              ]}
-              onChange={pid => option({ application: devices.applications.find(app => String(app.pid) === pid) ?? null })} />}
+            <Select label={t('computerSource')} hint={t('computerSourceHint')}
+              value={settings.source === 'system' ? systemOutput ? `output:${systemOutput}` : 'system' : savedValue}
+              items={sourceItems} onChange={changeSource} />
             <Select label={t('microphone')} hint={t('microphoneHint')} value={settings.microphone}
               items={endpoints(devices.microphones, settings.microphone, devices.defaultMicrophone)} onChange={microphone => option({ microphone })} />
           </div>
@@ -493,8 +524,15 @@ function NumberSelect({ label, value, values, unit, onChange }: { label: string;
   return <Select label={label} value={String(value)} items={items} onChange={value => onChange(Number(value))} />
 }
 
+type SelectItem = { value: string; label: string; disabled?: boolean }
+type SelectEntry = SelectItem | { label: string; items: SelectItem[] }
+
+function renderOption({ value, label, disabled }: SelectItem) {
+  return <option key={value} value={value} disabled={disabled}>{label}</option>
+}
+
 function Select({ label, hint, value, items, onChange }: {
-  label: string; hint?: string; value: string; items: { value: string; label: string }[]; onChange: (value: string) => void
+  label: string; hint?: string; value: string; items: SelectEntry[]; onChange: (value: string) => void
 }) {
   const id = useId()
   const hintId = `${id}-hint`
@@ -504,7 +542,9 @@ function Select({ label, hint, value, items, onChange }: {
     <span className="select-box">
       <select id={id} aria-describedby={hint ? hintId : undefined} value={value}
         onChange={event => onChange(event.target.value)}>
-        {items.map(item => <option key={item.value} value={item.value}>{item.label}</option>)}
+        {items.map(item => 'items' in item
+          ? <optgroup key={item.label} label={item.label}>{item.items.map(renderOption)}</optgroup>
+          : renderOption(item))}
       </select>
       <ChevronDown size={16} aria-hidden="true" />
     </span>
@@ -516,6 +556,7 @@ function FieldHint({ id, label, text, children }: { id: string; label: string; t
   const [hovered, setHovered] = useState(false)
   const [focused, setFocused] = useState(false)
   const [dismissed, setDismissed] = useState(false)
+  const tooltip = useRef<HTMLSpanElement>(null)
   const visible = !dismissed && (hovered || focused)
   useEffect(() => {
     if (!visible) return
@@ -525,20 +566,25 @@ function FieldHint({ id, label, text, children }: { id: string; label: string; t
     document.addEventListener('keydown', dismiss)
     return () => document.removeEventListener('keydown', dismiss)
   }, [visible])
-  return <span className="field-caption"
-    onPointerEnter={event => {
-      if (event.pointerType !== 'touch') {
-        setHovered(true)
-        setDismissed(false)
-      }
-    }}
-    onPointerLeave={() => setHovered(false)}>
+  return <span className="field-caption">
     {children}
     <button className="hint-trigger" type="button" aria-label={t('fieldHelp', { field: label })} aria-describedby={id}
-      onFocus={() => { setFocused(true); setDismissed(false) }}
-      onBlur={() => setFocused(false)}
-      onClick={() => { setFocused(true); setDismissed(false) }}><Info size={14} aria-hidden="true" /></button>
-    <span id={id} role="tooltip" className="field-tooltip" hidden={!visible}>{text}</span>
+      onPointerEnter={event => {
+        if (event.pointerType !== 'touch') {
+          setHovered(true)
+          setDismissed(false)
+        }
+      }}
+      onPointerLeave={event => {
+        if (!(event.relatedTarget instanceof Node && tooltip.current?.contains(event.relatedTarget))) setHovered(false)
+      }}
+      onFocus={event => {
+        setFocused(event.currentTarget.matches(':focus-visible'))
+        setDismissed(false)
+      }}
+      onBlur={() => setFocused(false)}><Info size={14} aria-hidden="true" /></button>
+    <span ref={tooltip} id={id} role="tooltip" className="field-tooltip" hidden={!visible}
+      onPointerLeave={() => setHovered(false)}>{text}</span>
   </span>
 }
 

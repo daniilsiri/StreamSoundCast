@@ -179,7 +179,9 @@ pub async fn run(
                             }
                         }
                     }
-                    if let Some(worker) = &workers[lane + 2] {
+                    if let Some(worker) = &workers[lane + 2]
+                        && !worker.playback_blocked.load(Relaxed)
+                    {
                         let volume = if guard.load(Relaxed) == 0 { channel.volume } else { 0 };
                         levels[lane + 2] = meter(&mut frame, volume, levels[lane + 2]);
                         worker.queue.force_push(frame);
@@ -269,13 +271,18 @@ fn configure_encoders(settings: &Settings, encoders: &mut [Encoder; 2]) -> Resul
 }
 
 fn capture_kinds(settings: &Settings) -> [WorkerKind; 2] {
-    let application = if settings.source == SourceMode::Application {
-        settings.application.clone()
-    } else {
-        None
+    let computer = match settings.source {
+        SourceMode::System => settings
+            .system_output_id()
+            .map_or(WorkerKind::Computer(SourceMode::System, None), |id| {
+                WorkerKind::OutputCapture(id.to_owned())
+            }),
+        SourceMode::Application => {
+            WorkerKind::Computer(SourceMode::Application, settings.application.clone())
+        }
     };
     [
-        WorkerKind::Computer(settings.source.clone(), application),
+        computer,
         WorkerKind::Microphone {
             id: settings.microphone.clone(),
             echo_reference: if settings.channels[2].enabled {
@@ -310,11 +317,17 @@ fn update_workers(
     guard: &Arc<AtomicUsize>,
 ) -> Result<()> {
     let [computer, microphone] = capture_kinds(settings);
+    let captured_output = settings.system_output_id().filter(|_| settings.channels[0].enabled);
+    let playback = |id: &str| WorkerKind::Playback {
+        id: id.to_owned(),
+        ms: settings.playback_ms,
+        captured_output: captured_output.map(str::to_owned),
+    };
     let kinds = [
         computer,
         microphone,
-        WorkerKind::Playback(settings.computer_output.clone(), settings.playback_ms),
-        WorkerKind::Playback(settings.microphone_output.clone(), settings.playback_ms),
+        playback(&settings.computer_output),
+        playback(&settings.microphone_output),
     ];
     for (lane, (worker, kind)) in workers.iter_mut().zip(kinds).enumerate() {
         update_worker(worker, kind, settings.channels[lane].enabled, guard)?;
@@ -325,6 +338,16 @@ fn update_workers(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn only_system_audio_can_capture_an_output_device() {
+        let mut settings = Settings::default();
+        assert!(matches!(capture_kinds(&settings)[0], WorkerKind::Computer(SourceMode::System, None)));
+        settings.system_output = Some("virtual-output".into());
+        assert!(matches!(&capture_kinds(&settings)[0], WorkerKind::OutputCapture(id) if id == "virtual-output"));
+        settings.source = SourceMode::Application;
+        assert!(matches!(capture_kinds(&settings)[0], WorkerKind::Computer(SourceMode::Application, None)));
+    }
 
     #[test]
     fn opus_round_trips_stereo_and_mono_with_ten_millisecond_frames() {

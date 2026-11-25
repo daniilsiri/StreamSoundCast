@@ -18,6 +18,7 @@
   --error: #ffc6ae;
   --success: #83d7a5;
   --channel-signal: #8fe4cc;
+  --channel-peak: #f8d66b;
   --channel-muted: #ff889a;
   --primary-text: var(--wave);
   --on-accent: #172724;
@@ -42,6 +43,7 @@
   --error: #9e2b1d;
   --success: #257245;
   --channel-signal: #086b57;
+  --channel-peak: #9e7500;
   --channel-muted: #a51e33;
   --primary-text: var(--deep);
   --on-accent: #fff;
@@ -180,8 +182,13 @@ svg { flex-shrink: 0; }
 .muted .volume input::-webkit-slider-thumb { background: var(--muted); }
 .muted .volume input::-moz-range-thumb { background: var(--muted); }
 .meter { display: flex; flex-direction: column-reverse; gap: 2px; }
-.meter span { flex: 1; border-radius: 2px; background: var(--hover); }
-.meter span.lit { background: var(--channel-signal); }
+.meter span { flex: 1; border-radius: 2px; background-color: var(--hover); transition: background-color 100ms linear; }
+.meter span.lit { background-color: color-mix(in srgb, var(--channel-signal), var(--channel-peak) var(--peak-blend, 0%)); }
+.meter span:nth-last-child(5) { --peak-blend: 20%; }
+.meter span:nth-last-child(4) { --peak-blend: 40%; }
+.meter span:nth-last-child(3) { --peak-blend: 60%; }
+.meter span:nth-last-child(2) { --peak-blend: 80%; }
+.meter span:last-child { --peak-blend: 100%; }
 .meter-scale { display: flex; flex-direction: column; justify-content: space-between; color: var(--muted); font-size: 11px; font-variant-numeric: tabular-nums; }
 .volume-value { grid-column: 1 / -1; justify-self: center; font-weight: 750; font-variant-numeric: tabular-nums; }
 .channel-controls { display: flex; justify-content: space-between; align-items: center; gap: 5px; }
@@ -305,6 +312,27 @@ svg { flex-shrink: 0; }
 .field select { appearance: none; padding-inline-end: 29px; text-overflow: ellipsis; cursor: pointer; }
 .select-box { position: relative; min-width: 0; }
 .select-box > svg { position: absolute; inset-inline-end: 9px; top: 50%; transform: translateY(-50%); color: var(--muted); pointer-events: none; }
+@supports (appearance: base-select) and selector(::picker(select)) {
+  .field select:has(optgroup), .field select:has(optgroup)::picker(select) { appearance: base-select; }
+  .field select:has(optgroup) { align-items: center; }
+  .field select:has(optgroup)::picker-icon { display: none; }
+  .field select:has(optgroup)::picker(select) {
+    inline-size: anchor-size(width);
+    max-block-size: 280px;
+    margin-block: 4px;
+    padding: 4px;
+    background: var(--panel);
+    border: 1px solid var(--strong-line);
+    border-radius: 7px;
+    box-shadow: 0 6px 16px #0003;
+    color: var(--text);
+  }
+  .field select optgroup { color: var(--muted); }
+  .field select:has(optgroup) option { min-height: 30px; padding: 5px 8px; border-radius: 4px; color: var(--text); white-space: normal; overflow-wrap: anywhere; }
+  .field select:has(optgroup) option:disabled { color: var(--muted); }
+  .field select:has(optgroup) option:is(:hover, :focus-visible) { background: var(--surface); }
+  .field select:has(optgroup) option:checked { background: var(--selected); color: var(--primary-text); }
+}
 .segmented { display: flex; gap: 3px; align-items: stretch; padding: 3px; min-height: 36px; border: 1px solid var(--strong-line); border-radius: 7px; background: var(--canvas); }
 .segmented button { display: flex; align-items: center; justify-content: center; gap: 5px; min-width: 0; min-height: 28px; flex: 1; padding: 3px 6px; border: 0; border-radius: 4px; background: transparent; color: var(--muted); font-size: 12px; font-weight: 750; }
 .segmented button:hover { background: var(--surface); }
@@ -371,4 +399,5 @@ svg { flex-shrink: 0; }
 }
 @media (prefers-reduced-motion: reduce) {
   .spinning svg { animation: none; }
+  .meter span { transition: none; }
 }
